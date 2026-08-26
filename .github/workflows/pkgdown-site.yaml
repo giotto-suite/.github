@@ -1,0 +1,287 @@
+# Shared pkgdown site build for the Giotto Suite.
+#
+# Every package site in the org calls this. Callers track @main, so a fix here
+# reaches each site on its next build -- and a mistake reaches them just as
+# fast. Validate changes by re-running GiottoData (the lowest-stakes site)
+# before anything else rebuilds.
+#
+#   jobs:
+#     site:
+#       permissions: {contents: write}
+#       uses: giotto-suite/.github/.github/workflows/pkgdown-site.yaml@main
+#       with:
+#         mode: release
+#
+# WHY THIS EXISTS
+#
+# 1. System libraries. pak reports NO system requirements in these jobs --
+#    `"sysreqs": ""` and `"sysreqs_packages": {}` for every package -- so RSPM
+#    binaries install cleanly and then fail at dlopen, deep inside reference
+#    rendering where downlit loads a namespace to resolve a cross-package link.
+#    Three GiottoClass builds died that way in turn on libproj, libudunits2 and
+#    libMagick++. Installing the set here fixes it for every site at once.
+#
+# 2. The deploy invariant. A release site deploys to the gh-pages root and MUST
+#    use clean: false, or it deletes the development site living under /dev/.
+#    A dev site deploys with target-folder: dev, where clean: true is safely
+#    scoped. That pairing used to be hand-copied into eight files, where one
+#    wrong value silently destroys a site. Here `mode` is the only knob and the
+#    wrong combination cannot be expressed.
+
+name: pkgdown site
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "release (deploy to /) or dev (deploy to /dev/)"
+        type: string
+        default: release
+      package-repo:
+        description: "owner/repo to document. Empty = build the caller repo in place."
+        type: string
+        default: ""
+      package-ref:
+        description: "branch/tag of package-repo"
+        type: string
+        default: ""
+      overlay-files:
+        description: "files copied from the caller repo over the package checkout"
+        type: string
+        default: "_pkgdown.yml index.md"
+      dependencies:
+        description: "setup-r-dependencies `dependencies` input"
+        type: string
+        default: '"hard"'
+      extra-packages:
+        description: "setup-r-dependencies `extra-packages` input"
+        type: string
+        default: "any::pkgdown, local::."
+      resolve-packages:
+        description: >
+          Newline- or comma-separated pak specs. When set, pak installs these
+          INSTEAD of resolving the package's own dependencies. For packages
+          whose Remotes: pak cannot solve -- a pinned and a bare ref for the
+          same package is a conflict it refuses -- resolve a clean tree here
+          and pin on top with `pins`.
+        type: string
+        default: ""
+      pins:
+        description: >
+          Newline-separated owner/repo@ref, installed IN ORDER with
+          dependencies = FALSE. That flag is the point: it stops any Remotes:
+          field being read again and pulling a default branch back over a
+          pinned ref.
+        type: string
+        default: ""
+      expect-versions:
+        description: "comma-separated Pkg=version assertions, checked before building"
+        type: string
+        default: ""
+      examples:
+        description: "run Rd examples (release default true, dev default false)"
+        type: string
+        default: ""
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    # Serialises this repo's release and dev deploys so they cannot race for the
+    # same gh-pages branch. For any non-PR run this is the constant
+    # "pkgdown-true"; a per-run group would be unique and serialise against
+    # nothing. Concurrency is per-repository, so sites in different repos still
+    # build in parallel.
+    concurrency:
+      group: pkgdown-${{ github.event_name != 'pull_request' || github.run_id }}
+    permissions:
+      contents: write
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      # The caller repo goes at the WORKSPACE ROOT, not a subpath. The deploy
+      # action runs `git config` in GITHUB_WORKSPACE and has no input to point
+      # it elsewhere, so the root must be a git repository -- checking
+      # everything into subdirectories leaves it bare and the deploy dies with
+      # "fatal: not in a git directory".
+      - uses: actions/checkout@v4
+
+      - name: Check out the package being documented
+        if: inputs.package-repo != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.package-repo }}
+          ref: ${{ inputs.package-ref }}
+          path: pkgsrc
+
+      # Lay the caller's website content over the package checkout. REPLACE
+      # vignettes/ rather than merging: a package usually ships vignettes that
+      # are not in the site's _pkgdown.yml, and pkgdown hard-fails with
+      # "N vignettes missing from index". The website repo is the source of
+      # truth for articles.
+      - name: Assemble the site source
+        if: inputs.package-repo != ''
+        env:
+          # via env, not inline ${{ }}: keeps caller input out of the script text
+          OVERLAY_FILES: ${{ inputs.overlay-files }}
+          PKG_REPO: ${{ inputs.package-repo }}
+          PKG_REF: ${{ inputs.package-ref }}
+        run: |
+          rm -rf pkgsrc/vignettes pkgsrc/pkgdown
+          [ -d vignettes ] && cp -r vignettes pkgsrc/ || true
+          [ -d pkgdown   ] && cp -r pkgdown   pkgsrc/ || true
+          for f in $OVERLAY_FILES; do
+            [ -f "$f" ] && cp "$f" pkgsrc/ || echo "  (no $f in the caller repo)"
+          done
+          echo "documenting $PKG_REPO@$PKG_REF"
+          echo "version:   $(grep '^Version:' pkgsrc/DESCRIPTION)"
+          echo "vignettes: $(ls pkgsrc/vignettes/*.Rmd pkgsrc/vignettes/*.rmd 2>/dev/null | wc -l)"
+
+      # See the header. pak resolves none of these, and the resulting dlopen
+      # failures surface a long way from anything that looks like a missing
+      # library. Grouped by the R package that needs them.
+      - name: System libraries for the RSPM binaries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libudunits2-dev \
+            libgdal-dev libgeos-dev libproj-dev \
+            libmagick++-dev \
+            libglpk-dev \
+            libhdf5-dev \
+            libxml2-dev libssl-dev libcurl4-openssl-dev \
+            libfontconfig1-dev libfreetype6-dev libharfbuzz-dev libfribidi-dev \
+            libpng-dev libtiff5-dev libjpeg-dev
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Resolve dependencies
+        if: inputs.resolve-packages == ''
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: ${{ inputs.package-repo != '' && 'pkgsrc' || '.' }}
+          dependencies: ${{ inputs.dependencies }}
+          extra-packages: ${{ inputs.extra-packages }}
+          needs: website
+
+      - name: Resolve an explicit dependency set
+        if: inputs.resolve-packages != ''
+        env:
+          RESOLVE_SPECS: ${{ inputs.resolve-packages }}
+        run: |
+          Rscript -e 'install.packages("pak", repos = sprintf(
+            "https://r-lib.github.io/p/pak/stable/%s/%s/%s",
+            .Platform$pkgType, R.version$os, R.version$arch))'
+          Rscript -e '
+            s <- commandArgs(TRUE)[1]
+            v <- trimws(unlist(strsplit(s, "[,\n]")))
+            v <- v[nzchar(v)]
+            cat("resolving:", paste(v, collapse = ", "), "\n")
+            pak::pkg_install(v)' "$RESOLVE_SPECS"
+
+      - name: Pin refs
+        if: inputs.pins != ''
+        env:
+          PIN_SPECS: ${{ inputs.pins }}
+        run: |
+          Rscript -e 'install.packages("remotes", repos = "https://cloud.r-project.org")'
+          Rscript -e '
+            s <- commandArgs(TRUE)[1]
+            v <- trimws(unlist(strsplit(s, "[,\n]")))
+            v <- v[nzchar(v)]
+            for (spec in v) {
+              cat("pinning", spec, "\n")
+              # dependencies = FALSE is load-bearing: it stops any Remotes:
+              # field being read again and pulling a default branch over a pin.
+              remotes::install_github(spec, upgrade = "never",
+                                      dependencies = FALSE, force = TRUE)
+            }' "$PIN_SPECS"
+
+      - name: Install the documented package
+        if: inputs.package-repo != ''
+        run: R CMD INSTALL --no-multiarch --no-docs pkgsrc
+
+      - name: Verify expected versions
+        if: inputs.expect-versions != ''
+        env:
+          EXPECT_VERSIONS: ${{ inputs.expect-versions }}
+        run: |
+          Rscript -e '
+            s <- commandArgs(TRUE)[1]
+            kv <- trimws(unlist(strsplit(s, ",")))
+            kv <- kv[nzchar(kv)]
+            bad <- character()
+            for (e in kv) {
+              p <- trimws(sub("=.*$", "", e)); want <- trimws(sub("^[^=]*=", "", e))
+              got <- tryCatch(as.character(utils::packageVersion(p)),
+                              error = function(e) NA_character_)
+              cat(sprintf("%-14s %s (want %s)\n", p, got, want))
+              if (!identical(got, want))
+                bad <- c(bad, sprintf("%s is %s, expected %s", p, got, want))
+            }
+            if (length(bad)) stop("wrong versions installed:\n  ",
+                                  paste(bad, collapse = "\n  "))' \
+            "$EXPECT_VERSIONS"
+
+      # Repo-specific preparation. A caller job that uses a reusable workflow
+      # cannot have its own steps, so anything bespoke lives in the repo it
+      # belongs to and is picked up here by convention. Runs in the directory
+      # pkgdown will build from.
+      - name: Repo-specific pre-build hook
+        env:
+          BUILD_ROOT: ${{ inputs.package-repo != '' && 'pkgsrc' || '.' }}
+        run: |
+          ROOT="$BUILD_ROOT"
+          if [ -x "$ROOT/pkgdown/pre-build.sh" ]; then
+            echo "running $ROOT/pkgdown/pre-build.sh"
+            (cd "$ROOT" && ./pkgdown/pre-build.sh)
+          elif [ -f "$ROOT/pkgdown/pre-build.sh" ]; then
+            echo "::warning::$ROOT/pkgdown/pre-build.sh exists but is not executable; skipping"
+          else
+            echo "no pre-build hook"
+          fi
+
+      - name: Build site
+        working-directory: ${{ inputs.package-repo != '' && 'pkgsrc' || '.' }}
+        env:
+          # REQUIRED for dev. Most configs have no `development:` block, so
+          # pkgdown defaults to mode: release and would write to docs/ root --
+          # straight over the released site.
+          PKGDOWN_DEV_MODE: ${{ inputs.mode == 'dev' && 'devel' || '' }}
+          RUN_EXAMPLES: ${{ inputs.examples != '' && inputs.examples || (inputs.mode == 'dev' && 'false' || 'true') }}
+        run: |
+          Rscript -e '
+            examples <- identical(Sys.getenv("RUN_EXAMPLES"), "true")
+            dev <- identical(Sys.getenv("PKGDOWN_DEV_MODE"), "devel")
+            ov <- list()
+            # dev-only presentation is injected here, never in _pkgdown.yml, so
+            # a release build reading the same config cannot pick it up.
+            if (dev && file.exists("pkgdown/dev-banner.html")) {
+              ov$template <- list(includes = list(before_body = paste(
+                readLines("pkgdown/dev-banner.html", warn = FALSE), collapse = "\n")))
+            }
+            cat("examples:", examples, " dev:", dev, "\n")
+            if (dev) {
+              pkgdown::build_site(install = FALSE, examples = examples,
+                                  new_process = FALSE, override = ov)
+            } else {
+              # adds CNAME and .nojekyll, which the root deploy needs
+              pkgdown::build_site_github_pages(install = FALSE, examples = examples,
+                                               new_process = FALSE)
+            }'
+
+      - name: Deploy
+        if: github.event_name != 'pull_request'
+        uses: JamesIves/github-pages-deploy-action@v4.4.1
+        with:
+          branch: gh-pages
+          folder: ${{ inputs.package-repo != '' && 'pkgsrc/docs' || 'docs' }}${{ inputs.mode == 'dev' && '/dev' || '' }}
+          # dev is scoped to its own folder, so clean is safe there. release
+          # writes to the root and must never clean, or it deletes /dev/.
+          target-folder: ${{ inputs.mode == 'dev' && 'dev' || '' }}
+          clean: ${{ inputs.mode == 'dev' }}
+          force: ${{ inputs.mode != 'dev' }}
