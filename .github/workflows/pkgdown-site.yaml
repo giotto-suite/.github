@@ -201,9 +201,18 @@ jobs:
                                       dependencies = FALSE, force = TRUE)
             }' "$PIN_SPECS"
 
+      # Install the package being documented, when dependency resolution has
+      # not already done it.
+      #
+      #   package-repo set      -> it was checked out into pkgsrc; install that
+      #   resolve-packages set  -> setup-r-dependencies never ran, so `local::.`
+      #                            never installed the caller's own package
+      #   neither               -> `local::.` in extra-packages already did it
       - name: Install the documented package
-        if: inputs.package-repo != ''
-        run: R CMD INSTALL --no-multiarch --no-docs pkgsrc
+        if: inputs.package-repo != '' || inputs.resolve-packages != ''
+        env:
+          BUILD_ROOT: ${{ inputs.package-repo != '' && 'pkgsrc' || '.' }}
+        run: R CMD INSTALL --no-multiarch --no-docs "$BUILD_ROOT"
 
       - name: Verify expected versions
         if: inputs.expect-versions != ''
