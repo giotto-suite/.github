@@ -155,6 +155,21 @@ jobs:
 
       - uses: r-lib/actions/setup-pandoc@v2
 
+      # Pin the pandoc R will use. Two end up on the runner: setup-pandoc puts
+      # a current one (3.8.3) in the tool cache, and pak later installs
+      # Debian's 3.1.3 as a system requirement. Which one R picks then depends
+      # on PATH resolution at the moment rmarkdown first looks, and getting the
+      # older one produces a baffling failure -- pkgdown emits a flag the newer
+      # pandoc understands and the build dies on
+      #   "Unknown option --syntax-highlighting"
+      # from inside an article render. Resolve it once, here, before anything
+      # can install a competitor.
+      - name: Pin pandoc for R
+        run: |
+          PANDOC_BIN="$(command -v pandoc)"
+          echo "RSTUDIO_PANDOC=$(dirname "$PANDOC_BIN")" >> "$GITHUB_ENV"
+          echo "using $PANDOC_BIN -- $(pandoc --version | head -1)"
+
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
