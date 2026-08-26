@@ -243,10 +243,14 @@ jobs:
       - name: Repo-specific pre-build hook
         env:
           BUILD_ROOT: ${{ inputs.package-repo != '' && 'pkgsrc' || '.' }}
+          # The hook is a file in the repo, so it runs for EVERY mode. A repo
+          # with both a release and a dev site needs to tell them apart --
+          # GiottoClass's hook is dev-only and would corrupt the release build.
+          SITE_MODE: ${{ inputs.mode }}
         run: |
           ROOT="$BUILD_ROOT"
           if [ -x "$ROOT/pkgdown/pre-build.sh" ]; then
-            echo "running $ROOT/pkgdown/pre-build.sh"
+            echo "running $ROOT/pkgdown/pre-build.sh (SITE_MODE=$SITE_MODE)"
             (cd "$ROOT" && ./pkgdown/pre-build.sh)
           elif [ -f "$ROOT/pkgdown/pre-build.sh" ]; then
             echo "::warning::$ROOT/pkgdown/pre-build.sh exists but is not executable; skipping"
