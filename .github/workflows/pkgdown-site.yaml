@@ -75,7 +75,12 @@ on:
         type: string
         default: ""
       expect-versions:
-        description: "comma-separated Pkg=version assertions, checked before building"
+        description: >
+          Comma-separated version assertions, checked before building.
+          Pkg=version requires exactly that version; Pkg>=version sets a
+          floor. Prefer a floor when the point is to catch a pinned ref being
+          overridden by an older default branch: an exact version fails every
+          time the pinned ref bumps its own version.
         type: string
         default: ""
       examples:
@@ -240,12 +245,19 @@ jobs:
             kv <- kv[nzchar(kv)]
             bad <- character()
             for (e in kv) {
-              p <- trimws(sub("=.*$", "", e)); want <- trimws(sub("^[^=]*=", "", e))
+              m <- regmatches(e, regexec("^([A-Za-z0-9.]+)[[:space:]]*(>=|=)[[:space:]]*([0-9][0-9.-]*)$", e))[[1]]
+              if (!length(m)) stop("cannot parse expect-versions entry: ", e)
+              p <- m[[2]]; op <- m[[3]]; want <- m[[4]]
               got <- tryCatch(as.character(utils::packageVersion(p)),
                               error = function(e) NA_character_)
-              cat(sprintf("%-14s %s (want %s)\n", p, got, want))
-              if (!identical(got, want))
-                bad <- c(bad, sprintf("%s is %s, expected %s", p, got, want))
+              ok <- !is.na(got) && if (op == ">=") {
+                package_version(got) >= package_version(want)
+              } else {
+                identical(got, want)
+              }
+              cat(sprintf("%-14s %s (want %s %s)\n", p, got, op, want))
+              if (!ok)
+                bad <- c(bad, sprintf("%s is %s, expected %s %s", p, got, op, want))
             }
             if (length(bad)) stop("wrong versions installed:\n  ",
                                   paste(bad, collapse = "\n  "))' \
