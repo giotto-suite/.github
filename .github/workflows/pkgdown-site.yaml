@@ -217,8 +217,19 @@ jobs:
               cat("pinning", spec, "\n")
               # dependencies = FALSE is load-bearing: it stops any Remotes:
               # field being read again and pulling a default branch over a pin.
-              remotes::install_github(spec, upgrade = "never",
-                                      dependencies = FALSE, force = TRUE)
+              # install_github only WARNS when R CMD INSTALL fails, and R then
+              # restores the previous version, so a failed pin would build the
+              # site against the wrong package. Make that fatal.
+              withCallingHandlers(
+                remotes::install_github(spec, upgrade = "never",
+                                        dependencies = FALSE, force = TRUE),
+                warning = function(w) {
+                  if (grepl("non-zero exit status", conditionMessage(w)))
+                    stop("pin failed: ", spec, "\n  ", conditionMessage(w),
+                         "\n  Pins install in the order listed, so a pin",
+                         " must come after everything it imports.",
+                         call. = FALSE)
+                })
             }' "$PIN_SPECS"
 
       # Install the package being documented, when dependency resolution has
