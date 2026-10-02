@@ -179,6 +179,37 @@ jobs:
         with:
           use-public-rspm: true
 
+      # pak solves the plan before the pins install, against the default branch
+      # a bare Remotes: entry names. A version floor the documented package sets
+      # on a pinned package -- one only the pinned ref satisfies -- then fails
+      # the whole solve, though the installed set would agree. Pins replace
+      # those packages anyway, so drop their floors for resolution only; the
+      # original DESCRIPTION comes back after the pins, so the documented
+      # package's own install still checks them.
+      - name: Relax version floors on pinned packages
+        if: inputs.pins != ''
+        env:
+          BUILD_ROOT: ${{ inputs.package-repo != '' && 'pkgsrc' || '.' }}
+          PIN_SPECS: ${{ inputs.pins }}
+        run: |
+          cp "$BUILD_ROOT/DESCRIPTION" "$RUNNER_TEMP/DESCRIPTION.orig"
+          Rscript -e '
+            s <- commandArgs(TRUE)[1]
+            v <- trimws(unlist(strsplit(s, "[,\n]")))
+            v <- v[nzchar(v)]
+            # owner/repo[/subdir][@ref] -> package name
+            pkgs <- basename(sub("@.*$", "", v))
+            f <- file.path(Sys.getenv("BUILD_ROOT"), "DESCRIPTION")
+            txt <- readLines(f)
+            # No backslashes: Rscript -e collapses \\ to \ before R parses it.
+            for (p in pkgs) {
+              pat <- sprintf("(?<![[:alnum:]._])%s[[:space:]]*[(][^)]*[)]", p)
+              hit <- grepl(pat, txt, perl = TRUE)
+              if (any(hit)) cat("relaxing:", trimws(txt[hit]), sep = "\n  ")
+              txt <- gsub(pat, p, txt, perl = TRUE)
+            }
+            writeLines(txt, f)' "$PIN_SPECS"
+
       - name: Resolve dependencies
         if: inputs.resolve-packages == ''
         uses: r-lib/actions/setup-r-dependencies@v2
@@ -231,6 +262,12 @@ jobs:
                          call. = FALSE)
                 })
             }' "$PIN_SPECS"
+
+      - name: Restore version floors on pinned packages
+        if: inputs.pins != ''
+        env:
+          BUILD_ROOT: ${{ inputs.package-repo != '' && 'pkgsrc' || '.' }}
+        run: cp "$RUNNER_TEMP/DESCRIPTION.orig" "$BUILD_ROOT/DESCRIPTION"
 
       # Install the package being documented, when dependency resolution has
       # not already done it.
