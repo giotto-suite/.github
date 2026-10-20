@@ -32,7 +32,10 @@ Giotto Suite is built from distinct modules, which makes it straightforward to e
 | Package | Description |
 |---|---|
 | [GiottoData](https://github.com/giotto-suite/GiottoData) | Mini example datasets for rapid testing, plus helpers to download and import publicly available datasets. |
-| [GiottoDisk](https://github.com/giotto-suite/GiottoDisk) *(in development)* | On-disk processing for large-scale spatial data. A unified storage layer (Parquet/Arrow, HDF5, BPCells, TileDB) gives lazy, file-backed representations of expression matrices and spatial geometries, so analyses can scale beyond memory. Also provides project management for on-disk artifacts and snapshots. |
+| [GiottoDisk](https://github.com/giotto-suite/GiottoDisk) *(experimental)* | On-disk processing for large-scale spatial data. A unified storage layer (Parquet/Arrow, HDF5, BPCells, TileDB) gives lazy, file-backed representations of expression matrices and spatial geometries, so analyses can scale beyond memory. Also provides project management for on-disk artifacts and snapshots. |
+| [GiottoKernels](https://github.com/giotto-suite/GiottoKernels) *(experimental)* | Optional compiled kernels written in Rust. Installing it speeds up supported computations; without it, the suite falls back to its R implementations. |
+| [GiottoLens](https://github.com/giotto-suite/GiottoLens) *(experimental)* | Interactive web viewer for GiottoDisk-backed data, built on deck.gl and DuckDB WASM. Renders hundreds of millions of transcripts at interactive frame rates, with two-way communication with R for annotation and selection. |
+| [GiottoSeq](https://github.com/giotto-suite/GiottoSeq) *(experimental)* | Sequence-based spatial omics analysis, such as poly(A) site and genomic peak data. |
 | [GiottoDB](https://github.com/giotto-suite/GiottoDB) *(experimental)* | Database-backed processing for scalable analysis. |
 
 ## Website guide
