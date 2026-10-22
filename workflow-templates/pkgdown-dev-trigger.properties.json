@@ -1,0 +1,11 @@
+{
+  "name": "Giotto module pkgdown dev trigger",
+  "description": "Rebuilds a Giotto Suite module's dev pkgdown site when its dev branch changes. Goes on the dev branch.",
+  "iconName": "octicon sync",
+  "categories": [
+    "R"
+  ],
+  "filePatterns": [
+    "^DESCRIPTION$"
+  ]
+}

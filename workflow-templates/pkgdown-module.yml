@@ -1,0 +1,97 @@
+# Giotto Suite module pkgdown sites -- the caller for the `website` branch.
+#
+#   release  https://giotto-suite.github.io/<pkg>/      latest GitHub release
+#   dev      https://giotto-suite.github.io/<pkg>/dev/  the dev branch
+#
+# SETUP
+# 1. Make the `website` branch site content only: _pkgdown.yml, pkgdown/ and
+#    this file. The package source is checked out at build time, so the branch
+#    never has to be kept in sync with the package.
+# 2. Copy pkgdown/pre-build.sh (restores the documented ref's vignettes) and
+#    pkgdown/dev-banner.html (edit the package name and links) from
+#    giotto-suite/GiottoUtils@website. pre-build.sh must be committed
+#    executable (git update-index --chmod=+x).
+# 3. If the dev line is not `dev` (e.g. `gsource`), change the dev-ref default
+#    and the `|| 'dev'` fallback below.
+# 4. Add extra-packages a vignette needs, and `pins` / `expect-versions` if the
+#    dev line needs unreleased dependencies (see the shared workflow's inputs).
+# 5. Add the "pkgdown dev trigger" template to the dev branch.
+#
+# WHEN DOES EACH SITE REBUILD?
+#   push / PR here      both sites (a PR builds without deploying)
+#   dev changes         dev site, dispatched by pkgdown-dev-trigger.yaml on dev
+#   a new release       run this workflow by hand. A `release` event runs the
+#                       workflow file at the tagged commit, and main carries no
+#                       CI, so it cannot trigger this.
+#
+# The build itself is giotto-suite/.github/.github/workflows/pkgdown-site.yaml.
+# A release site is a link target other packages resolve to, so its reference
+# pages must keep their URLs.
+
+name: pkgdown
+
+on:
+  push:
+    branches: [website]
+  pull_request:
+    branches: [website]
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "Which site to build"
+        type: choice
+        options: [both, release, dev]
+        default: both
+      release-ref:
+        description: "Tag for the release site (default: latest release)"
+        required: false
+      dev-ref:
+        description: "Branch for the dev site"
+        required: false
+        default: dev
+
+jobs:
+  release-ref:
+    if: inputs.site != 'dev'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.release-ref }}
+        run: |
+          tag="${INPUT_REF:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)}"
+          echo "release site documents $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: release-ref
+    # The reusable workflow can only narrow what the caller grants, so the
+    # write permission the gh-pages deploy needs has to be declared here.
+    permissions:
+      contents: write
+    uses: giotto-suite/.github/.github/workflows/pkgdown-site.yaml@main
+    with:
+      mode: release
+      package-repo: ${{ github.repository }}
+      package-ref: ${{ needs.release-ref.outputs.tag }}
+      overlay-files: "_pkgdown.yml"
+      dependencies: '"hard"'
+      extra-packages: "any::pkgdown, bioc::BiocStyle, local::."
+
+  dev:
+    # the shared workflow's concurrency group serialises this with the release
+    # deploy, since both write the same gh-pages branch
+    if: inputs.site != 'release'
+    permissions:
+      contents: write
+    uses: giotto-suite/.github/.github/workflows/pkgdown-site.yaml@main
+    with:
+      mode: dev
+      package-repo: ${{ github.repository }}
+      package-ref: ${{ inputs.dev-ref || 'dev' }}
+      overlay-files: "_pkgdown.yml"
+      dependencies: '"hard"'
+      extra-packages: "any::pkgdown, bioc::BiocStyle, local::."

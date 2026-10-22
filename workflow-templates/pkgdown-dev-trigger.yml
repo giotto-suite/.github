@@ -1,0 +1,40 @@
+# Giotto Suite module pkgdown sites -- the dev-site trigger, for the dev branch.
+#
+# Rebuilds https://giotto-suite.github.io/<pkg>/dev/ when the dev branch
+# changes. The site is built by pkgdown.yaml on the `website` branch (the
+# "Giotto module pkgdown sites" template), which checks this branch out; this
+# only dispatches it. If the dev line is not `dev`, change `branches:` and
+# `dev-ref=` below.
+#
+# main is kept CI-free: a staging -> main release must delete this file, as it
+# does the other workflows. GITHUB_TOKEN may start a
+# workflow_dispatch run, so no extra secret is needed.
+
+name: pkgdown dev trigger
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "R/**"
+      - "man/**"
+      - "vignettes/**"
+      - "DESCRIPTION"
+      - "NAMESPACE"
+      - "NEWS.md"
+      - "README.md"
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Rebuild the dev site
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run pkgdown.yaml --repo "$GITHUB_REPOSITORY" \
+            --ref website -f site=dev -f dev-ref=dev
