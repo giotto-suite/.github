@@ -1,6 +1,6 @@
 {
   "name": "Giotto module pkgdown sites",
-  "description": "Release and dev pkgdown sites for a Giotto Suite module, built from package checkouts by the shared workflow. Goes on the website branch.",
+  "description": "Release (default branch) and dev pkgdown sites for a Giotto Suite module, built from package checkouts by the shared workflow. Goes on the website branch.",
   "iconName": "octicon book",
   "categories": [
     "R"
