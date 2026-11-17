@@ -71,7 +71,8 @@ on:
           Newline-separated owner/repo@ref, installed IN ORDER with
           dependencies = FALSE. That flag is the point: it stops any Remotes:
           field being read again and pulling a default branch back over a
-          pinned ref.
+          pinned ref. Hard dependencies the pinned ref declares that are not
+          yet installed are added from CRAN/Bioconductor first.
         type: string
         default: ""
       expect-versions:
@@ -244,8 +245,37 @@ jobs:
             s <- commandArgs(TRUE)[1]
             v <- trimws(unlist(strsplit(s, "[,\n]")))
             v <- v[nzchar(v)]
+            pinned <- basename(sub("@.*$", "", v))
             for (spec in v) {
               cat("pinning", spec, "\n")
+              # Dependency resolution installed what each pinned package needs
+              # on its DEFAULT branch. A hard dependency only the pinned ref
+              # declares is therefore missing, so read the pinned DESCRIPTION
+              # and add those from CRAN/Bioconductor -- never from Remotes:,
+              # and never another pin, which installs from its own entry.
+              rem <- remotes::github_remote(spec)
+              src <- tempfile()
+              utils::untar(remotes::remote_download(rem), exdir = src)
+              pkgdir <- file.path(list.dirs(src, recursive = FALSE)[1],
+                                  if (is.null(rem$subdir)) "" else rem$subdir)
+              miss <- setdiff(remotes::local_package_deps(pkgdir),
+                              c(rownames(utils::installed.packages()), pinned))
+              if (length(miss)) {
+                cat("  adding dependencies only the pinned ref declares:",
+                    miss, "\n")
+                if (!requireNamespace("pak", quietly = TRUE))
+                  install.packages("pak", repos = sprintf(
+                    "https://r-lib.github.io/p/pak/stable/%s/%s/%s",
+                    .Platform$pkgType, R.version$os, R.version$arch))
+                tryCatch(
+                  pak::pkg_install(paste0("any::", miss), upgrade = FALSE),
+                  error = function(e)
+                    stop("pin failed: ", spec, " needs ",
+                         paste(miss, collapse = ", "), ", which did not",
+                         " install from CRAN or Bioconductor.\n  A GitHub-only",
+                         " dependency must be its own pin, listed first.\n  ",
+                         conditionMessage(e), call. = FALSE))
+              }
               # dependencies = FALSE is load-bearing: it stops any Remotes:
               # field being read again and pulling a default branch over a pin.
               # install_github only WARNS when R CMD INSTALL fails, and R then
